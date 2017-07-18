@@ -1,0 +1,60 @@
+import os
+import stat
+from keyword import kwlist as _kwlist
+
+
+class _Wrapper:
+    def __init__(self, name):
+        self.name = name
+
+    def __call__(self, *args):
+        import os
+
+        class Printer(str):
+            def __repr__(self):
+                return self
+        read_fd, write_fd = os.pipe()
+        if os.fork():
+            os.close(write_fd)
+            f = os.fdopen(read_fd)
+            output = f.read()
+            os.wait()
+            f.close()
+            return Printer(output)
+        else:
+            os.close(read_fd)
+            os.dup2(write_fd, 1)
+            os.close(write_fd)
+            os.execlp(self.name, self.name, *args)
+
+EXECUTABLE = stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH
+commands = set()
+path, filename = None, None
+for path in os.environ['PATH'].split(':'):
+    for filename in os.listdir(path):
+        if os.path.isfile(os.path.join(path, filename)) and \
+                os.stat(os.path.join(path, filename)).st_mode & EXECUTABLE:
+            commands.add(filename)
+del EXECUTABLE, path, filename, os, stat
+
+_command, _parts, _part, _prefix = (None,) * 4
+_eval = eval
+_exec = exec
+_print = print
+_all = all
+_commands = commands
+del commands
+for _command in _commands:
+    _parts = _command.split('.')
+    if not _all(_part.isidentifier() and _part not in _kwlist for _part in _parts):
+        _print('INFO skipped %s' % _command)
+        continue
+    _prefix = ''
+    for _part in _parts:
+        if _prefix:
+            _prefix += '.'
+        _prefix += _part
+        _exec('%s = _Wrapper(%r)' % (_prefix, _prefix))
+del _command, _commands, _parts, _part, _prefix, _Wrapper, _kwlist
+
+from os import chdir as cd

@@ -8,24 +8,125 @@ class _Wrapper:
         self.name = name
 
     def __call__(self, *args):
-        import os
 
-        class Printer(str):
+        class Command:
+            def __init__(self):
+                self.iscommand = True
+                self.done = False
+                self.o = ''
+
+            def run(self, read_fd, write_fd):
+                raise NotImplementedError
+
+            def clean(self):
+                import os
+                os.wait()
+
             def __repr__(self):
-                return self
-        read_fd, write_fd = os.pipe()
-        if os.fork():
-            os.close(write_fd)
-            f = os.fdopen(read_fd)
-            output = f.read()
-            os.wait()
-            f.close()
-            return Printer(output)
-        else:
-            os.close(read_fd)
-            os.dup2(write_fd, 1)
-            os.close(write_fd)
-            os.execlp(self.name, self.name, *args)
+                if not self.done:
+                    import os
+                    read_fd, write_fd = os.pipe()
+                    self.run(0, write_fd)
+                    f = os.fdopen(read_fd)
+                    self.o = f.read()
+                    self.clean()
+                    f.close()
+                    self.done = True
+                return self.o
+
+            def __or__(self, other):
+                self.done = True
+                if _type(other) is not _str:
+                    return PipedCommand(self, other)
+                return PipedCommand(self, Outputer(other))
+
+            def __ror__(self, other):
+                self.done = True
+                return PipedCommand(Inputer(other), self)
+
+        class Outputer(Command):
+            def __init__(self, file):
+                _super(Outputer, self).__init__()
+                self.file = file
+
+            def run(self, read_fd, _):
+                # _print('DEBUG', self.file, read_fd, _)
+                import os
+                if not os.fork():
+                    p = os.fdopen(read_fd, 'rb')
+                    f = _open(self.file, 'wb')
+                    block = p.read(4096)
+                    while _len(block) == 4096:
+                        f.write(block)
+                        block = p.read(4096)
+                    f.write(block)
+                    _exit()
+                if read_fd != 0:
+                    os.close(read_fd)
+                if _ != 1:
+                    os.close(_)
+
+        class Inputer(Command):
+            def __init__(self, file):
+                _super(Inputer, self).__init__()
+                self.file = file
+
+            def run(self, _, write_fd):
+                # _print('DEBUG', self.file, _, write_fd)
+                import os
+                if not os.fork():
+                    p = os.fdopen(write_fd, 'wb')
+                    f = _open(self.file, 'rb')
+                    block = f.read(4096)
+                    while _len(block) == 4096:
+                        p.write(block)
+                        block = f.read(4096)
+                    p.write(block)
+                    _exit()
+                if _ != 0:
+                    os.close(_)
+                if write_fd != 1:
+                    os.close(write_fd)
+
+        class SingalCommand(Command):
+            def __init__(self, name, *args):
+                _super(SingalCommand, self).__init__()
+                self.name = name
+                self.args = args
+
+            def run(self, read_fd, write_fd):
+                # _print('DEBUG', self.name, read_fd, write_fd)
+                import os
+                if not os.fork():
+                    if read_fd != 0:
+                        os.dup2(read_fd, 0)
+                        os.close(read_fd)
+                    if write_fd != 1:
+                        os.dup2(write_fd, 1)
+                        os.close(write_fd)
+                    os.execlp(self.name, self.name, *args)
+                if read_fd != 0:
+                    os.close(read_fd)
+                if write_fd != 1:
+                    os.close(write_fd)
+
+        class PipedCommand(Command):
+            def __init__(self, left, right):
+                _super(PipedCommand, self).__init__()
+                self.left = left
+                self.right = right
+
+            def run(self, read_fd, write_fd):
+                import os
+                i_read_fd, i_write_fd = os.pipe()
+                self.left.run(read_fd, i_write_fd)
+                self.right.run(i_read_fd, write_fd)
+
+            def clean(self):
+                self.left.clean()
+                self.right.clean()
+
+        return SingalCommand(self.name, *args)
 
 EXECUTABLE = stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH
 commands = set()
@@ -43,11 +144,18 @@ _exec = exec
 _print = print
 _all = all
 _commands = commands
+_open = open
+_len = len
+_isinstance = isinstance
+_super = super
+_exit = exit
+_type = type
+_str = str
 del commands
 for _command in _commands:
     _parts = _command.split('.')
     if not _all(_part.isidentifier() and _part not in _kwlist for _part in _parts):
-        _print('INFO skipped %s' % _command)
+        # _print('INFO skipped %s' % _command)
         continue
     _prefix = ''
     for _part in _parts:
@@ -58,3 +166,6 @@ for _command in _commands:
 del _command, _commands, _parts, _part, _prefix, _Wrapper, _kwlist
 
 from os import chdir as cd
+import sys
+sys.ps1 = 'pysh> '
+sys.ps2 = '  ... '
